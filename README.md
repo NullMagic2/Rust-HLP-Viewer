@@ -16,7 +16,7 @@ Because Rusty HLP Viewer is open source and cross-platform, it can also run on L
 - Image support
 - Hyperlinks
 - HTML conversion (both through the application and as a flag for batch processing)
-- - Printing (whole document or topic range)
+- Printing (whole document or topic range)
 
 
   <img width="3838" height="1816" alt="image" src="https://github.com/user-attachments/assets/d194175b-6b52-45f5-af7e-479907eb47d9" />
