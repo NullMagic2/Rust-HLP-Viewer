@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "hlp",
+    "viewer",
+    "wmf",
+]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+authors = ["Rust HLP Viewer contributors"]
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
