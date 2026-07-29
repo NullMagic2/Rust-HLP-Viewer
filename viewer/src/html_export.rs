@@ -462,7 +462,6 @@ fn collect_macro_help_files(text: &str, output: &mut Vec<String>) {
             | SafeHelpMacro::Finder
             | SafeHelpMacro::FocusWindow { .. }
             | SafeHelpMacro::History
-            | SafeHelpMacro::OpenUrl { .. }
             | SafeHelpMacro::Next
             | SafeHelpMacro::Prev
             | SafeHelpMacro::Search
@@ -1315,28 +1314,14 @@ fn semantic_text_style(run: &TextRun, fonts: &FontTable) -> ResolvedTextStyle {
             background_inherits: true,
             charset: None,
         },
-        |font| {
-            semantic_style_from_font_with_background_inheritance(
-                font,
-                run.hotspot.as_ref(),
-                fonts.background_inherits(run.font_index),
-            )
-        },
+        |font| semantic_style_from_font(font, run.hotspot.as_ref()),
     )
 }
 
 fn semantic_style_from_font(font: &FontDescriptor, hotspot: Option<&Hotspot>) -> ResolvedTextStyle {
-    let inherited_background = font.background == (Rgb { red: 1, green: 1, blue: 0 });
-    semantic_style_from_font_with_background_inheritance(font, hotspot, inherited_background)
-}
-
-fn semantic_style_from_font_with_background_inheritance(
-    font: &FontDescriptor,
-    hotspot: Option<&Hotspot>,
-    inherited_background: bool,
-) -> ResolvedTextStyle {
     let emphasized = hotspot.is_some();
     let inherited = font.foreground == (Rgb { red: 1, green: 1, blue: 0 });
+    let inherited_background = font.background == (Rgb { red: 1, green: 1, blue: 0 });
     ResolvedTextStyle {
         face_name: font.face_name.clone(),
         family: if font.is_fixed_pitch() { ResolvedFontFamily::Monospace } else { ResolvedFontFamily::Proportional },
@@ -1972,10 +1957,6 @@ fn safe_macro_operation_js(
         SafeHelpMacro::Contents => simple("contents"),
         SafeHelpMacro::Finder => Some("{kind:\"pane\",pane:\"index\"}".to_owned()),
         SafeHelpMacro::History => Some("{kind:\"pane\",pane:\"history\"}".to_owned()),
-        SafeHelpMacro::OpenUrl { url } => Some(format!(
-            "{{kind:\"url\",url:{}}}",
-            js_string(&url)
-        )),
         SafeHelpMacro::Search => Some("{kind:\"pane\",pane:\"search\"}".to_owned()),
         SafeHelpMacro::FocusWindow { window } => Some(format!(
             "{{kind:\"focusWindow\",window:{}}}",
@@ -2769,7 +2750,6 @@ const EXPORT_JS: &str = r#"
         // secondary-window targets still resolve their destination but activate in the main view.
         openMain(action.doc,action.topic);
         break;
-      case "url": window.open(action.url,"_blank","noopener,noreferrer"); break;
       case "program": executeOps(action.ops,event); break;
       case "noop": setStatus(action.message||"This action is unavailable in the export."); break;
     }
@@ -2785,7 +2765,7 @@ const EXPORT_JS: &str = r#"
   }
   function executeOp(op,event){
     if(!op) return;
-    if(op.kind==="open"||op.kind==="url"){ activate(op,event); return; }
+    if(op.kind==="open"){ activate(op,event); return; }
     switch(op.kind){
       case "about": alert(`${EXPORT_TITLE}\n\nInteractive HTML exported by Rust HLP Viewer.`); break;
       case "back": goBack(); break;

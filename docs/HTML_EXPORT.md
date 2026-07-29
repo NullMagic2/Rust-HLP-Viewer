@@ -17,7 +17,7 @@ The exported file therefore contains:
 - root-owned Contents, Show all, Index, Search, Bookmarks, and History navigation; hierarchical Contents uses the authored `.CNT`/`.GID` parent/child structure with collapsible branches when available;
 - Back/Forward, physical Previous/Next, authored browse navigation, navigation-pane resizing/toggling, display zoom, and browser printing;
 - clickable text, picture, and standard WinHelp button hotspots;
-- the viewer's safe typed macro subset, translated to local JavaScript operations; the version 1.0 browser-only `ExecFile` exception becomes an explicit HTTP(S) link action rather than arbitrary script or host execution.
+- the viewer's safe typed macro subset, translated to local JavaScript operations rather than arbitrary script or host execution.
 
 The HTML contains no external stylesheet, JavaScript library, image request, font download, or server dependency. Decoded RGBA pictures are base64-embedded in the file and painted into canvases locally.
 
@@ -150,11 +150,11 @@ For an exported `ALink`, the exporter resolves the authored semicolon-delimited 
 
 ## Macro and file security
 
-HTML export keeps the existing default-deny WinHelp macro model. Only macros already represented by `SafeHelpMacro` are converted into typed actions. The exporter never inserts raw HLP macro text as executable JavaScript. The narrow version 1.0 `OpenUrl` action accepts only validated `http://` or `https://` targets originating from the browser-only `ExecFile` form; activation uses the browser's own navigation API in a new tab.
+HTML export keeps the existing default-deny WinHelp macro model. Only macros already represented by `SafeHelpMacro` are converted into browser-local operations. The exporter never inserts raw HLP macro text as executable JavaScript.
 
 Automatic cross-document collection is intentionally limited to relative HLP paths. Absolute drive paths, rooted paths, and UNC/network paths are not traversed during export. A target that is not embedded is retained as a safe unavailable action rather than causing the HTML file to access the user's filesystem or network.
 
-Arbitrary WinHelp hosted controls remain inert placeholders. No native executable, DLL, ActiveX control, command shell, `file:` target, or arbitrary external command is launched by the exported viewer. A user-clicked allow-listed `OpenUrl` action may open its validated HTTP(S) target in a new browser tab.
+Arbitrary WinHelp hosted controls remain inert placeholders. No native executable, DLL, ActiveX control, command shell, or external URL is launched by the exported viewer.
 
 ## Self-contained state
 

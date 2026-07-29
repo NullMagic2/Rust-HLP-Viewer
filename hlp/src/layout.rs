@@ -1898,29 +1898,11 @@ fn resolve_style(run: &TextRun, fonts: &FontTable) -> ResolvedTextStyle {
             background_inherits: true,
             charset: None,
         },
-        |font| {
-            style_from_font_with_background_inheritance(
-                font,
-                run.hotspot.as_ref(),
-                fonts.background_inherits(run.font_index),
-            )
-        },
+        |font| style_from_font(font, run.hotspot.as_ref()),
     )
 }
 
 fn style_from_font(font: &FontDescriptor, hotspot: Option<&Hotspot>) -> ResolvedTextStyle {
-    style_from_font_with_background_inheritance(
-        font,
-        hotspot,
-        is_inherit_colour(font.background),
-    )
-}
-
-fn style_from_font_with_background_inheritance(
-    font: &FontDescriptor,
-    hotspot: Option<&Hotspot>,
-    background_inherits: bool,
-) -> ResolvedTextStyle {
     let emphasized = hotspot.is_some_and(|value| value.emphasized);
     ResolvedTextStyle {
         face_name: font.face_name.clone(),
@@ -1947,7 +1929,7 @@ fn style_from_font_with_background_inheritance(
         },
         foreground_inherits: !emphasized && is_inherit_colour(font.foreground),
         background: font.background,
-        background_inherits,
+        background_inherits: is_inherit_colour(font.background),
         charset: font.charset,
     }
 }

@@ -13,7 +13,7 @@ if defined HLP_VIEWER_TARGET_DIR (
   set "CARGO_TARGET_DIR=%TEMP%\hv"
 )
 
-echo === Rust HLP Viewer 1.0 build ===
+echo === Rust HLP Viewer 0.7.1 build ===
 echo Cargo/native cache: %CARGO_TARGET_DIR%
 echo.
 

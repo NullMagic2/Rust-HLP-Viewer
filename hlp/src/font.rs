@@ -14,8 +14,6 @@ const LEGACY_FACE_NAME_SIZE: usize = 20;
 const HCW40_FACE_NAME_SIZE: usize = 32;
 const MAX_FACES: usize = 4096;
 const MAX_DESCRIPTORS: usize = 16384;
-const INHERIT_COLOUR: Rgb = Rgb { red: 1, green: 1, blue: 0 };
-const BLACK: Rgb = Rgb { red: 0, green: 0, blue: 0 };
 
 /// RGB colour stored by WinHelp font descriptors.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -120,11 +118,6 @@ pub struct FontTable {
     locale_id: Option<u16>,
     face_names: Vec<String>,
     descriptors: Vec<FontDescriptor>,
-    /// Runtime background-inheritance semantics for each descriptor. In addition to WinHlp32's
-    /// exact RGB(1,1,0) sentinel, this includes a narrow compatibility case emitted by some HCW
-    /// producers: an RGB(0,0,0) descriptor that has an otherwise byte-equivalent sentinel twin.
-    /// The raw descriptor colour remains untouched for diagnostics and reverse engineering.
-    background_inheritance: Vec<bool>,
 }
 
 impl FontTable {
@@ -164,7 +157,6 @@ impl FontTable {
                 family: HlpFontFamily::Swiss,
                 charset: None,
             }],
-            background_inheritance: vec![false],
         }
     }
 
@@ -203,7 +195,6 @@ impl FontTable {
             face_name_size,
         )?;
         let descriptors = parse_descriptors(bytes, &face_names, num_descriptors, descriptor_offset)?;
-        let background_inheritance = derive_background_inheritance(&descriptors);
 
         Ok(Self {
             metric: FontMetric::HalfPoints,
@@ -211,7 +202,6 @@ impl FontTable {
             locale_id: None,
             face_names,
             descriptors,
-            background_inheritance,
         })
     }
 
@@ -264,50 +254,6 @@ impl FontTable {
     pub fn descriptor(&self, index: u16) -> Option<&FontDescriptor> {
         self.descriptors.get(usize::from(index))
     }
-
-    /// Returns whether this descriptor's background should inherit the active help-window colour.
-    ///
-    /// Exact RGB(1,1,0) remains the normal WinHlp32 sentinel. A small number of compiler-generated
-    /// HLPs also contain an RGB(0,0,0) descriptor immediately equivalent in every other formatting
-    /// property to a sentinel-background descriptor. Treating that duplicate as inherited prevents
-    /// the compiler artifact from becoming an opaque black rectangle without weakening the exact
-    /// sentinel rule for ordinary authored black backgrounds.
-    pub fn background_inherits(&self, index: u16) -> bool {
-        self.background_inheritance
-            .get(usize::from(index))
-            .copied()
-            .or_else(|| self.background_inheritance.first().copied())
-            .unwrap_or(true)
-    }
-}
-
-fn derive_background_inheritance(descriptors: &[FontDescriptor]) -> Vec<bool> {
-    descriptors
-        .iter()
-        .map(|descriptor| {
-            descriptor.background == INHERIT_COLOUR
-                || (descriptor.background == BLACK
-                    && descriptors.iter().any(|candidate| {
-                        candidate.background == INHERIT_COLOUR
-                            && same_descriptor_style_except_background(descriptor, candidate)
-                    }))
-        })
-        .collect()
-}
-
-fn same_descriptor_style_except_background(left: &FontDescriptor, right: &FontDescriptor) -> bool {
-    left.face_index == right.face_index
-        && left.face_name == right.face_name
-        && left.point_size_twips == right.point_size_twips
-        && left.weight == right.weight
-        && left.bold == right.bold
-        && left.italic == right.italic
-        && left.underline == right.underline
-        && left.strike_out == right.strike_out
-        && left.double_underline == right.double_underline
-        && left.small_caps == right.small_caps
-        && left.foreground == right.foreground
-        && left.family == right.family
 }
 
 /// Deterministic counterpart to WinHlp32's host-dependent charset fallback.
@@ -561,22 +507,5 @@ mod tests {
     #[test]
     fn rejects_face_slots_not_used_by_reference_renderer() {
         assert!(FontTable::parse(&font_stream(12, 0)).is_err());
-    }
-
-    #[test]
-    fn black_background_only_inherits_when_an_equivalent_sentinel_twin_exists() {
-        let mut black = FontTable::fallback().descriptors()[0].clone();
-        black.background = BLACK;
-        let mut inherited = black.clone();
-        inherited.background = INHERIT_COLOUR;
-
-        assert_eq!(derive_background_inheritance(&[black.clone()]), vec![false]);
-        assert_eq!(
-            derive_background_inheritance(&[black.clone(), inherited.clone()]),
-            vec![true, true]
-        );
-
-        inherited.foreground = Rgb { red: 0, green: 0, blue: 255 };
-        assert_eq!(derive_background_inheritance(&[black, inherited]), vec![false, true]);
     }
 }

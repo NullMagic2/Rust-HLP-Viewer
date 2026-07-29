@@ -1,9 +1,22 @@
-## 1.0 - 2026-07-27
+## v0.7.1-buildfix84
 
-- Uses colour-neutral grayscale antialiasing for Windows topic text. The retained GDI font path previously left `LOGFONTW.lfQuality` at `DEFAULT_QUALITY`, allowing ClearType subpixel rendering; on cream/yellow WinHelp backgrounds this produced conspicuous orange/blue fringes around glyphs in the supplied HelpScribble file. `ANTIALIASED_QUALITY` keeps the exact retained font size and GDI metrics while matching the smooth appearance of ordinary viewer text.
-- Treats HelpScribble's paired black-background font descriptors as inherited only when an otherwise identical `RGB(1,1,0)` sentinel descriptor exists, removing compiler-generated black rectangles without weakening authored black backgrounds.
-- Allows the constrained HelpScribble `ExecFile` Internet-link form to open only `http://` and `https://` URLs in the system browser; arbitrary executables, files and unsafe shell actions remain blocked.
-- Bumps the workspace/application version to 1.0.0 / 1.0.
+- Fixes a stale native child-window offset after navigating away from a scrolled topic, most visibly after tall topics containing images. The new topic could begin above the viewport, leaving its title and first lines cropped even though the logical scroll position reported `(0, 0)`.
+- The scrolling topic canvas is a real child panel that wxWidgets physically moves while scrolling. Topic rebuilds previously changed only its size and reset the `wxScrolledWindow` helper; if the helper had already accepted `y_pos: 0`, the final `scroll_coords(0, 0)` could be a no-op while the child panel still had a negative Y position.
+- Adds `reset_scrolling_canvas_to_origin`, which reconciles both layers: it resets the logical view and explicitly places the retained child panel at native position `(0, 0)` before and after installing the new scrollbar range. Main topics, secondary windows, and popup/auxiliary topic surfaces use the same fix.
+- Rendering, wrapping width, image scaling, and authored topic geometry are unchanged.
+
+## v0.7.1-buildfix83
+
+- Fixes the Windows build error `E0255` in `viewer/src/main.rs`: `InvalidateRect` was imported from `windows_sys` and also declared manually in the local `user32` FFI block, so Rust saw two values with the same name in one module.
+- Removes only the redundant manual declaration. All existing calls now resolve to the already imported `windows_sys` function; rendering, invalidation timing, and window behaviour are unchanged.
+
+## v0.7.1-buildfix82
+
+- Fixes retained topic text that appeared to lose font anti-aliasing, and then to be clipped or missing entirely, once a topic containing a picture had been scrolled. The cause was that the topic surface is painted through **two independent device contexts for the same window**. `bind_paint_handler` and `bind_auxiliary_paint` construct a `PaintDC` - `BeginPaint`, clipped to the *update region* - for the background clear, picture blits, paragraph borders, and selection fills, while `WindowsTextDc` obtains a private handle with `GetDC` - clipped to the window's *visible region* - so that HC30 half-point sizes survive to the device as a pixel-height `LOGFONT`. The two clips agree on a full repaint, which is why a freshly opened topic always looked correct.
+- They diverge on a scroll. `wxScrolledWindow` moves the retained child panel natively, so Windows blits the existing pixels and invalidates only the newly exposed strip. The `PaintDC` clear was therefore confined to that strip while every text run in the topic was re-emitted across the whole canvas, on top of glyphs that had never been erased. Redrawing anti-aliased text over its own output in `TRANSPARENT` mode re-blends each partially covered edge pixel toward the solid glyph colour, so after a few scroll steps the edges saturate and the glyphs thicken - the reported "anti-aliasing is disabled" appearance is over-draw accumulation, not a font-quality flag - and the surviving fragments of the previous, un-erased copy read as clipped or missing characters.
+- `invalidate_whole_canvas` now widens the pending update region to the whole client area at the top of both paint handlers. It has to run *before* `PaintDC::new()`, because `BeginPaint` validates the update region and the region cannot be widened afterwards. Both device contexts then cover the same pixels and every scroll step draws over a freshly cleared background. `bErase` is `FALSE`: the canvases use `BackgroundStyle::Paint` and clear themselves through the `PaintDC`.
+- `paint_region` and `paint_region_with_selection` now paint in two passes - every `PaintDC` primitive first, then all retained text. Previously a picture was blitted when its box was reached in authored order, which erased glyphs already standing on the pixels it covered; that is why the damage began at the first topic containing a picture. Text hotspot boxes, placeholders, borders, and the selection overlay keep their existing relative order, and the authored order of the text runs themselves is unchanged.
+- No change to font selection, measurement, or `create_gdi_font_for_style`. The `.hlp` file cannot influence host font smoothing, and none of the affected documents were at fault.
 
 ## v0.7.1-buildfix81
 

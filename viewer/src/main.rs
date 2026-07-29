@@ -1,6 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
-//! Native wxDragon front end and integrated diagnostic entry point for Rust HLP Viewer 1.0.
+//! Native wxDragon front end and integrated diagnostic entry point for Rust HLP Viewer 0.7.1.
 //!
 //! The process chooses its launch mode before wxWidgets is initialized. Diagnostic dumps and
 //! `--export-html` therefore exercise the same Rust parser/exporter as the GUI without constructing
@@ -49,19 +49,16 @@ use windows_sys::Win32::Foundation::{HANDLE, HWND, POINT, RECT, SIZE};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Graphics::Gdi::{
     CreateFontIndirectW, DeleteObject, GetDC, GetDeviceCaps, GetTextExtentPoint32W,
-    GetTextMetricsW, ReleaseDC, SelectObject, SetBkMode, SetTextColor, TextOutW,
-    ANTIALIASED_QUALITY, DEFAULT_CHARSET, HDC, HGDIOBJ, LOGFONTW, LOGPIXELSX, LOGPIXELSY,
-    TEXTMETRICW, TRANSPARENT,
+    GetTextMetricsW, InvalidateRect, ReleaseDC, SelectObject, SetBkMode, SetTextColor, TextOutW,
+    DEFAULT_CHARSET, HDC, HGDIOBJ, LOGFONTW, LOGPIXELSX, LOGPIXELSY, TEXTMETRICW, TRANSPARENT,
 };
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::UI::Shell::ShellExecuteW;
-#[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, FindWindowExW, GetParent, GetSystemMetrics,
     GetWindowThreadProcessId, LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, SM_CXICON,
-    SM_CXSMICON, SM_CYICON, SM_CYSMICON, SW_SHOWNORMAL, WM_SETICON,
+    SM_CXSMICON, SM_CYICON, SM_CYSMICON, WM_SETICON,
 };
 
 const ID_OPEN: i32 = 1001;
@@ -118,7 +115,7 @@ const VK_ESCAPE: i32 = 27;
 const WXK_LEFT: i32 = 314;
 const WXK_RIGHT: i32 = 316;
 
-const WELCOME_TEXT: &str = "Rust HLP Viewer 1.0\n\nOpen a classic Windows .HLP file with File > Open (Ctrl+O). File > Export to HTML creates a self-contained interactive browser copy that preserves the retained formatting/navigation model. File > Print (Ctrl+P) prints the current topic, selected topic ranges, or all topics while retaining topic formatting.\n\nThe browsing strip provides Previous/Next topic navigation, authored browse buttons when present, the Navigation pane toggle, and text zoom. Back/Forward remain available from the Navigate menu and Alt+Left/Alt+Right. View > Navigation Pane (F9) shows or hides the Contents / Index / Search / Bookmarks / History side panel. Drag the divider beside the navigation pane to resize it.\n\nDrag across topic text to select it, then use Edit > Copy (Ctrl+C). Paste (Ctrl+V) inserts clipboard text into the focused Index or Search field.";
+const WELCOME_TEXT: &str = "Rust HLP Viewer 0.7.1\n\nOpen a classic Windows .HLP file with File > Open (Ctrl+O). File > Export to HTML creates a self-contained interactive browser copy that preserves the retained formatting/navigation model. File > Print (Ctrl+P) prints the current topic, selected topic ranges, or all topics while retaining topic formatting.\n\nThe browsing strip provides Previous/Next topic navigation, authored browse buttons when present, the Navigation pane toggle, and text zoom. Back/Forward remain available from the Navigate menu and Alt+Left/Alt+Right. View > Navigation Pane (F9) shows or hides the Contents / Index / Search / Bookmarks / History side panel. Drag the divider beside the navigation pane to resize it.\n\nDrag across topic text to select it, then use Edit > Copy (Ctrl+C). Paste (Ctrl+V) inserts clipboard text into the focused Index or Search field.";
 
 /// Native controls shared by the main-window event closures.
 struct ViewerUi {
@@ -3183,6 +3180,9 @@ fn topic_label(title: &str, topic_index: usize) -> String {
 /// Binds paint dispatch for either the non-scrolling or scrolling retained region.
 fn bind_paint_handler(canvas: Panel, state: Rc<RefCell<ViewerState>>, fixed_region: bool) {
     canvas.on_paint(move |_event: WindowEventData| {
+        // Must run before PaintDC::new(): BeginPaint validates the update region, so afterwards
+        // the region can no longer be widened. See invalidate_whole_canvas.
+        invalidate_whole_canvas(canvas);
         let dc = PaintDC::new(&canvas);
         dc.set_background(colour_from_rgb(HELP_BACKGROUND));
         dc.clear();
@@ -4355,7 +4355,6 @@ unsafe extern "system" {
     fn BeginPaint(hwnd: HWND, paint: *mut NativePaintStruct) -> HDC;
     fn EndPaint(hwnd: HWND, paint: *const NativePaintStruct) -> i32;
     fn FillRect(hdc: HDC, rect: *const RECT, brush: *mut std::ffi::c_void) -> i32;
-    fn InvalidateRect(hwnd: HWND, rect: *const RECT, erase: i32) -> i32;
     fn UpdateWindow(hwnd: HWND) -> i32;
     fn GetCursorPos(point: *mut POINT) -> i32;
     fn ScreenToClient(hwnd: HWND, point: *mut POINT) -> i32;
@@ -6104,13 +6103,6 @@ fn execute_safe_macro_main(
             refresh_history_list(ui, state);
             ui.history_list.set_focus();
         }
-        SafeHelpMacro::OpenUrl { url } => match open_browser_url(&url) {
-            Ok(()) => ui.status_bar.set_status_text("Opened link in the default browser", 0),
-            Err(error) => {
-                log_macro_diagnostic(state, format!("{origin}: could not open URL {url:?}: {error}"));
-                ui.status_bar.set_status_text("Could not open Internet link", 0);
-            }
-        },
         SafeHelpMacro::JumpContents { help_file, window } => {
             macro_jump_main(
                 ui,
@@ -6575,6 +6567,7 @@ fn bind_auxiliary_paint(
     fixed_region: bool,
 ) {
     canvas.on_paint(move |_event: WindowEventData| {
+        invalidate_whole_canvas(canvas);
         let dc = PaintDC::new(&canvas);
         let state = state.borrow();
         let background = auxiliary_background(&state, fixed_region);
@@ -6914,18 +6907,6 @@ fn execute_safe_macro_auxiliary(
             refresh_history_list(main_ui, main_state);
             main_ui.history_list.set_focus();
         }
-        SafeHelpMacro::OpenUrl { url } => match open_browser_url(&url) {
-            Ok(()) => main_ui
-                .status_bar
-                .set_status_text("Opened link in the default browser", 0),
-            Err(error) => {
-                log_macro_diagnostic(
-                    main_state,
-                    format!("{origin}: could not open URL {url:?}: {error}"),
-                );
-                main_ui.status_bar.set_status_text("Could not open Internet link", 0);
-            }
-        },
         SafeHelpMacro::JumpContents { help_file, window } => macro_jump_auxiliary(
             main_ui,
             main_state,
@@ -7605,18 +7586,13 @@ fn refresh_auxiliary_layout(ui: &AuxiliaryUi, state: &Rc<RefCell<AuxiliaryState>
     ui.fixed_canvas
         .set_min_size(Size::new(-1, if has_fixed { fixed_height } else { 0 }));
     let viewport_height = ui.scrolled.get_client_size().height.max(1);
-    ui.scrolling_canvas
-        .set_size(Size::new(width, scrolling_height.max(viewport_height)));
-    ui.scrolled.set_scrollbars(ScrollBarConfig {
-        pixels_per_unit_x: SCROLL_UNIT,
-        pixels_per_unit_y: SCROLL_UNIT,
-        no_units_x: 0,
-        no_units_y: units_for(scrolling_height, SCROLL_UNIT),
-        x_pos: 0,
-        y_pos: 0,
-        no_refresh: false,
-    });
-    ui.scrolled.scroll_coords(0, 0);
+    reset_scrolling_canvas_to_origin(
+        ui.scrolled,
+        ui.scrolling_canvas,
+        width,
+        scrolling_height.max(viewport_height),
+        scrolling_height,
+    );
     if kind == AuxiliaryKind::Secondary {
         let caption = state
             .borrow()
@@ -7698,18 +7674,13 @@ fn refresh_topic_layout(ui: &ViewerUi, state: &Rc<RefCell<ViewerState>>) {
     ui.fixed_canvas.set_min_size(Size::new(-1, if has_fixed { fixed_height } else { 0 }));
 
     let viewport_height = ui.scrolled.get_client_size().height.max(1);
-    ui.scrolling_canvas
-        .set_size(Size::new(width, scrolling_height.max(viewport_height)));
-    ui.scrolled.set_scrollbars(ScrollBarConfig {
-        pixels_per_unit_x: SCROLL_UNIT,
-        pixels_per_unit_y: SCROLL_UNIT,
-        no_units_x: 0,
-        no_units_y: units_for(scrolling_height, SCROLL_UNIT),
-        x_pos: 0,
-        y_pos: 0,
-        no_refresh: false,
-    });
-    ui.scrolled.scroll_coords(0, 0);
+    reset_scrolling_canvas_to_origin(
+        ui.scrolled,
+        ui.scrolling_canvas,
+        width,
+        scrolling_height.max(viewport_height),
+        scrolling_height,
+    );
     ui.frame.layout();
     ui.fixed_canvas.refresh(true, None);
     ui.scrolling_canvas.refresh(true, None);
@@ -7749,6 +7720,41 @@ fn units_for(pixels: i32, unit: i32) -> i32 {
     pixels.saturating_add(unit - 1) / unit.max(1)
 }
 
+/// Resets both wxScrolledWindow's logical view and the retained child panel's native position.
+///
+/// wxScrolledWindow implements scrolling by physically moving child windows. Rebuilding a topic
+/// used to update only the child panel's size and then request logical position `(0, 0)`. After a
+/// tall or image-heavy topic had been scrolled, `set_scrollbars(... y_pos: 0)` could already make
+/// the helper believe it was at the origin while the child panel still retained its negative Y
+/// position. The next topic was therefore painted with its title and first lines above the visible
+/// client area, making the text look cropped.
+///
+/// Force the panel's native rectangle back to `(0, 0)` both before and after resetting the scroll
+/// helper. The second placement deliberately reconciles the physical child position with the
+/// newly installed logical origin even when wxWidgets considers the final `scroll_coords(0, 0)` a
+/// no-op.
+fn reset_scrolling_canvas_to_origin(
+    scrolled: ScrolledWindow,
+    canvas: Panel,
+    width: i32,
+    canvas_height: i32,
+    scrolling_height: i32,
+) {
+    scrolled.scroll_coords(0, 0);
+    canvas.set_size_with_pos(0, 0, width, canvas_height);
+    scrolled.set_scrollbars(ScrollBarConfig {
+        pixels_per_unit_x: SCROLL_UNIT,
+        pixels_per_unit_y: SCROLL_UNIT,
+        no_units_x: 0,
+        no_units_y: units_for(scrolling_height, SCROLL_UNIT),
+        x_pos: 0,
+        y_pos: 0,
+        no_refresh: false,
+    });
+    scrolled.scroll_coords(0, 0);
+    canvas.set_size_with_pos(0, 0, width, canvas_height);
+}
+
 /// Paints the milestone text shown before a document has been opened.
 fn paint_welcome(dc: &PaintDC) {
     let font = Font::new_with_details(
@@ -7779,19 +7785,15 @@ fn paint_region(
 ) {
     let native_text = NativeTextContext::new(canvas);
     dc.set_brush(wxdragon::color::colours::WHITE, BrushStyle::Transparent);
+
+    // Pass 1 paints everything that reaches the surface through the wx PaintDC. Text is held back
+    // because it is emitted through a separate GDI device context (see WindowsTextDc): a bitmap
+    // blit issued later in box order would otherwise erase glyphs that were already on the pixels
+    // it covers, which is why text next to a picture disappeared.
     for item in &region.boxes {
         match &item.kind {
-            LayoutKind::Text { text, style, .. } => paint_text(
-                dc,
-                &native_text,
-                item,
-                text,
-                style,
-                text_zoom_percent,
-                default_background,
-            ),
+            LayoutKind::Text { .. } | LayoutKind::PictureHotspot { .. } => {}
             LayoutKind::Picture { image } => paint_picture(dc, item, image),
-            LayoutKind::PictureHotspot { .. } => {},
             LayoutKind::PicturePlaceholder => paint_picture_placeholder(dc, item),
             LayoutKind::EmbeddedWindowPlaceholder {
                 descriptor,
@@ -7810,6 +7812,21 @@ fn paint_region(
             }
         }
     }
+
+    // Pass 2 paints the retained text runs on top, in authored order.
+    for item in &region.boxes {
+        if let LayoutKind::Text { text, style, .. } = &item.kind {
+            paint_text(
+                dc,
+                &native_text,
+                item,
+                text,
+                style,
+                text_zoom_percent,
+                default_background,
+            );
+        }
+    }
 }
 
 /// Paints a retained region and overlays the active topic text selection.
@@ -7825,71 +7842,77 @@ fn paint_region_with_selection(
     dc.set_brush(wxdragon::color::colours::WHITE, BrushStyle::Transparent);
     let ordered_selection = selection.map(TopicTextSelection::ordered);
 
-    for (box_index, item) in region.boxes.iter().enumerate() {
+    // Pass 1: PaintDC primitives only. See paint_region for why text is deferred.
+    for item in &region.boxes {
         match &item.kind {
-            LayoutKind::Text { text, style, .. } => {
-                paint_text(
-                    dc,
-                    &native_text,
-                    item,
-                    text,
-                    style,
-                    text_zoom_percent,
-                    default_background,
-                );
-                let Some((start, end)) = ordered_selection else {
-                    continue;
-                };
-                let Some((from, to)) = selection_byte_range_for_box(text.len(), box_index, start, end) else {
-                    continue;
-                };
-                if !text.is_char_boundary(from) || !text.is_char_boundary(to) {
-                    continue;
-                }
-                let prefix_width = measure_text_width(
-                    canvas,
-                    &native_text,
-                    style,
-                    &text[..from],
-                    text_zoom_percent,
-                );
-                let selected_width = measure_text_width(
-                    canvas,
-                    &native_text,
-                    style,
-                    &text[from..to],
-                    text_zoom_percent,
-                );
-                if selected_width <= 0 {
-                    continue;
-                }
-                let selection_x = item.bounds.x.saturating_add(prefix_width);
-                dc.set_pen(colour_from_rgb(TEXT_SELECTION_BACKGROUND), 1, PenStyle::Solid);
-                dc.set_brush(colour_from_rgb(TEXT_SELECTION_BACKGROUND), BrushStyle::Solid);
-                dc.draw_rectangle(selection_x, item.bounds.y, selected_width, item.bounds.height);
-
-                if !native_text.paint(
-                    style,
-                    &text[from..to],
-                    text_zoom_percent,
-                    TEXT_SELECTION_FOREGROUND,
-                    selection_x,
-                    item.bounds.y,
-                ) {
-                    let font = make_native_font(style, text_zoom_percent);
-                    dc.set_font(&font);
-                    dc.set_text_foreground(colour_from_rgb(TEXT_SELECTION_FOREGROUND));
-                    dc.set_background_mode(wxdragon::dc::BackgroundMode::Transparent);
-                    dc.draw_text(&text[from..to], selection_x, item.bounds.y);
-                }
-            }
+            LayoutKind::Text { .. } | LayoutKind::PictureHotspot { .. } => {}
             LayoutKind::Picture { image } => paint_picture(dc, item, image),
-            LayoutKind::PictureHotspot { .. } => {},
             LayoutKind::PicturePlaceholder => paint_picture_placeholder(dc, item),
             LayoutKind::EmbeddedWindowPlaceholder { descriptor, standard_button_label, .. } => {
                 paint_embedded_window_placeholder(dc, item, descriptor, standard_button_label.as_deref());
             }
             LayoutKind::Border { flags, style } => paint_border(dc, item, *flags, *style),
+        }
+    }
+
+    // Pass 2: retained text plus the selection overlay.
+    for (box_index, item) in region.boxes.iter().enumerate() {
+        let LayoutKind::Text { text, style, .. } = &item.kind else {
+            continue;
+        };
+        paint_text(
+            dc,
+            &native_text,
+            item,
+            text,
+            style,
+            text_zoom_percent,
+            default_background,
+        );
+        let Some((start, end)) = ordered_selection else {
+            continue;
+        };
+        let Some((from, to)) = selection_byte_range_for_box(text.len(), box_index, start, end) else {
+            continue;
+        };
+        if !text.is_char_boundary(from) || !text.is_char_boundary(to) {
+            continue;
+        }
+        let prefix_width = measure_text_width(
+            canvas,
+            &native_text,
+            style,
+            &text[..from],
+            text_zoom_percent,
+        );
+        let selected_width = measure_text_width(
+            canvas,
+            &native_text,
+            style,
+            &text[from..to],
+            text_zoom_percent,
+        );
+        if selected_width <= 0 {
+            continue;
+        }
+        let selection_x = item.bounds.x.saturating_add(prefix_width);
+        dc.set_pen(colour_from_rgb(TEXT_SELECTION_BACKGROUND), 1, PenStyle::Solid);
+        dc.set_brush(colour_from_rgb(TEXT_SELECTION_BACKGROUND), BrushStyle::Solid);
+        dc.draw_rectangle(selection_x, item.bounds.y, selected_width, item.bounds.height);
+
+        if !native_text.paint(
+            style,
+            &text[from..to],
+            text_zoom_percent,
+            TEXT_SELECTION_FOREGROUND,
+            selection_x,
+            item.bounds.y,
+        ) {
+            let font = make_native_font(style, text_zoom_percent);
+            dc.set_font(&font);
+            dc.set_text_foreground(colour_from_rgb(TEXT_SELECTION_FOREGROUND));
+            dc.set_background_mode(wxdragon::dc::BackgroundMode::Transparent);
+            dc.draw_text(&text[from..to], selection_x, item.bounds.y);
         }
     }
 }
@@ -8247,12 +8270,6 @@ fn create_gdi_font_for_style(
     logical_font.lfUnderline = u8::from(style.underline);
     logical_font.lfStrikeOut = u8::from(style.strike_out);
     logical_font.lfCharSet = style.charset.unwrap_or(DEFAULT_CHARSET as u8);
-    // Keep topic text on the same smooth, colour-neutral path as the rest of the viewer.
-    // Leaving LOGFONT quality at DEFAULT_QUALITY lets GDI select ClearType subpixel rendering;
-    // on WinHelp's cream/yellow page backgrounds that produces conspicuous orange/blue fringes
-    // around otherwise normal glyphs (especially the 10 pt HelpScribble Arial body text).
-    // Grayscale antialiasing preserves the exact retained size/metrics without those RGB edges.
-    logical_font.lfQuality = ANTIALIASED_QUALITY as u8;
 
     let (_, preferred_face) = native_font_policy(style);
     let max_face_units = logical_font.lfFaceName.len().saturating_sub(1);
@@ -8272,6 +8289,42 @@ fn create_gdi_font_for_style(
 #[cfg(target_os = "windows")]
 fn colorref_from_rgb(value: Rgb) -> u32 {
     u32::from(value.red) | (u32::from(value.green) << 8) | (u32::from(value.blue) << 16)
+}
+
+/// Widens the pending WM_PAINT update region to the whole client area before `BeginPaint` runs.
+///
+/// Retained text is emitted through a private `GetDC` handle (`WindowsTextDc`) so that HC30
+/// half-point sizes survive as a pixel-height LOGFONT. That handle is clipped to the window's
+/// *visible* region, whereas the `PaintDC` returned by `BeginPaint` is clipped to the *update*
+/// region. The two agree on a full repaint, and disagree after a scroll: `wxScrolledWindow` moves
+/// the retained child window, so Windows blits the existing pixels and invalidates only the newly
+/// exposed strip. The background clear, the picture blits and the selection fills were then
+/// confined to that strip while every glyph in the topic was re-emitted across the whole canvas,
+/// on top of glyphs that had never been erased.
+///
+/// Redrawing anti-aliased text over itself in TRANSPARENT mode drives the partially covered edge
+/// pixels toward the solid glyph colour on each pass. After a few scroll steps the edges saturate,
+/// which is exactly the reported "anti-aliasing is off" appearance, and the surviving fragments of
+/// the previous, un-erased copy read as clipped or missing glyphs.
+///
+/// Invalidating the whole client area first keeps both device contexts covering the same pixels,
+/// so every scroll step draws over a freshly cleared background. `FALSE` for `bErase` is correct
+/// here: the canvas uses `BackgroundStyle::Paint` and clears itself through the `PaintDC`.
+#[cfg(target_os = "windows")]
+#[allow(unsafe_code)]
+fn invalidate_whole_canvas(canvas: Panel) {
+    let hwnd = canvas.get_handle() as HWND;
+    if hwnd.is_null() {
+        return;
+    }
+    unsafe {
+        InvalidateRect(hwnd, std::ptr::null(), 0);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn invalidate_whole_canvas(canvas: Panel) {
+    let _ = canvas;
 }
 
 /// Returns the authored font height in twentieths of a point after WinHlp32 small-caps scaling.
@@ -8702,86 +8755,10 @@ fn describe_hotspot(hotspot: &Hotspot) -> String {
     }
 }
 
-fn browser_url_is_safe(url: &str) -> bool {
-    if url.is_empty() || url.trim() != url || url.chars().any(char::is_control) {
-        return false;
-    }
-    url.get(..7)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
-        || url
-            .get(..8)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
-}
-
-/// Opens the already allow-listed HTTP(S) URL without routing it through a command shell.
-#[cfg(target_os = "windows")]
-#[allow(unsafe_code)]
-fn open_browser_url(url: &str) -> Result<(), String> {
-    if !browser_url_is_safe(url) {
-        return Err("only HTTP(S) browser URLs are allowed".to_owned());
-    }
-    let operation = "open"
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let target = url
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let result = unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            operation.as_ptr(),
-            target.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-            SW_SHOWNORMAL,
-        )
-    };
-    let code = result as isize;
-    if code <= 32 {
-        Err(format!("Windows ShellExecuteW failed with code {code}"))
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn open_browser_url(url: &str) -> Result<(), String> {
-    if !browser_url_is_safe(url) {
-        return Err("only HTTP(S) browser URLs are allowed".to_owned());
-    }
-    std::process::Command::new("open")
-        .arg(url)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("could not launch the default browser: {error}"))
-}
-
-#[cfg(all(unix, not(target_os = "macos")))]
-fn open_browser_url(url: &str) -> Result<(), String> {
-    if !browser_url_is_safe(url) {
-        return Err("only HTTP(S) browser URLs are allowed".to_owned());
-    }
-    std::process::Command::new("xdg-open")
-        .arg(url)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("could not launch the default browser: {error}"))
-}
-
-#[cfg(not(any(target_os = "windows", target_os = "macos", unix)))]
-fn open_browser_url(url: &str) -> Result<(), String> {
-    if !browser_url_is_safe(url) {
-        return Err("only HTTP(S) browser URLs are allowed".to_owned());
-    }
-    Err("opening browser URLs is not implemented on this platform".to_owned())
-}
-
 /// Displays an informational dialog describing the current compatibility milestone.
 fn show_about(frame: &Frame) {
     let message = concat!(
-        "Rust HLP Viewer 1.0\n\n",
+        "Rust HLP Viewer 0.7.1\n\n",
         "A native Rust viewer for classic Microsoft Windows HLP files.\n",
         "GUI: wxDragon / wxWidgets"
     );

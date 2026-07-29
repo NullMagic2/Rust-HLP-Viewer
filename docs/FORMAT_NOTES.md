@@ -1,4 +1,4 @@
-# HLP format notes used through milestone 1.0
+# HLP format notes used through milestone 0.7.1
 
 The classic WinHelp on-disk format was not fully published. This parser is a fresh Rust implementation guided primarily by the reverse-engineered HelpDeco format description/structures and cross-checked where useful against Wine's current WinHelp implementation.
 
@@ -29,8 +29,6 @@ Each 11-byte descriptor contains the attribute flags, half-point size, family se
 foreground RGB, and background RGB. The retained `FontDescriptor` preserves those semantics,
 including bold, italic, underline, strikeout, small caps, the otherwise-unused 0x10 attribute bit,
 and the exact `RGB(1,1,0)` colour-inheritance sentinel established by the renderer.
-
-Version 1.0 retains that verified rule in the raw parser, but the presentation layer also recognizes a narrow compiler-compatibility artifact observed in the supplied HelpScribble file: when an `RGB(0,0,0)` descriptor has an otherwise identical `RGB(1,1,0)` descriptor twin, both are treated as inheriting the help-window background. A standalone authored black background remains black.
 
 Modern charset selection comes from `|SYSTEM`, not from a larger font descriptor. Record type 11 is
 a byte array indexed by the descriptor's **face index**; record type 9 is a ten-byte locale record

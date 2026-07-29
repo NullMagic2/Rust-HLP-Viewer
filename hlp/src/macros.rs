@@ -1,10 +1,9 @@
 //! Parser and safety classification for the classic WinHelp macro language.
 //!
 //! WinHelp macros are executable content in the historical viewer.  This module deliberately
-//! stops at a typed, GUI-independent command model: a small viewer-local subset plus a narrowly
-//! validated HTTP(S) browser action is marked safe, while general process execution, dynamic DLL
-//! registration, system interaction, unsupported legacy UI mutation, and unknown operations remain
-//! explicit blocked values.
+//! stops at a typed, GUI-independent command model: only a small viewer-local subset is marked
+//! safe, while process execution, dynamic DLL registration, system interaction, unsupported
+//! legacy UI mutation, and unknown operations remain explicit blocked values.
 
 use std::fmt;
 
@@ -63,7 +62,7 @@ pub enum HelpMacro {
     Blocked(BlockedHelpMacro),
 }
 
-/// Allow-listed WinHelp operations that cannot execute arbitrary host code.
+/// Viewer-local WinHelp operations that cannot execute arbitrary host code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SafeHelpMacro {
     ALink { keywords: String },
@@ -77,10 +76,6 @@ pub enum SafeHelpMacro {
     Finder,
     FocusWindow { window: String },
     History,
-    /// Opens a validated HTTP(S) URL in the user's default browser. This is the only host-launch
-    /// exception to the default-deny WinHelp macro policy and is produced only from a constrained
-    /// `ExecFile` form with no command-line arguments.
-    OpenUrl { url: String },
     JumpContents { help_file: String, window: String },
     JumpContext { help_file: String, window: String, context: i32 },
     JumpHash { help_file: String, window: String, hash: i32 },
@@ -209,7 +204,6 @@ fn classify(invocation: MacroInvocation) -> HelpMacro {
         Some("Finder") => no_args(&invocation).then_some(SafeHelpMacro::Finder),
         Some("FocusWindow") => one_string(&invocation).map(|window| SafeHelpMacro::FocusWindow { window }),
         Some("History") => no_args(&invocation).then_some(SafeHelpMacro::History),
-        Some("ExecFile") => exec_file_browser_url(&invocation).map(|url| SafeHelpMacro::OpenUrl { url }),
         Some("JumpContents") => two_strings(&invocation).map(|(help_file, window)| {
             SafeHelpMacro::JumpContents { help_file, window }
         }),
@@ -450,43 +444,6 @@ fn three_integers(invocation: &MacroInvocation) -> Option<(i32, i32, i32)> {
         }
         _ => None,
     }
-}
-
-/// Recognizes the constrained `ExecFile` shape used by HelpScribble and similar WinHelp authors
-/// for Internet links. Arbitrary files/programs, URL parameters, and non-HTTP(S) schemes remain
-/// blocked by the normal external-execution policy.
-fn exec_file_browser_url(invocation: &MacroInvocation) -> Option<String> {
-    let url = match invocation.arguments.as_slice() {
-        [MacroArgument::String(url)] => url,
-        [
-            MacroArgument::String(url),
-            MacroArgument::String(parameters),
-            MacroArgument::Integer(_show_command),
-        ] if parameters.is_empty() => url,
-        [
-            MacroArgument::String(url),
-            MacroArgument::String(parameters),
-            MacroArgument::Integer(_show_command),
-            MacroArgument::String(context),
-        ] if parameters.is_empty() && context.is_empty() => url,
-        _ => return None,
-    };
-    is_browser_url(url).then(|| url.clone())
-}
-
-fn is_browser_url(value: &str) -> bool {
-    if value.is_empty()
-        || value.trim() != value
-        || value.chars().any(char::is_control)
-    {
-        return false;
-    }
-    value
-        .get(..7)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("http://"))
-        || value
-            .get(..8)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("https://"))
 }
 
 struct Parser<'a> {
@@ -812,43 +769,6 @@ mod tests {
             &program.macros[3],
             HelpMacro::Blocked(BlockedHelpMacro { reason: MacroBlockReason::ExternalExecution, .. })
         ));
-    }
-
-    #[test]
-    fn helpscribble_http_execfile_is_reduced_to_browser_only_navigation() {
-        let program = HelpMacroProgram::parse(r#"EF("http://www.helpscribble.com/",`',1)"#)
-            .expect("HelpScribble Internet Link macro parses");
-        assert_eq!(
-            program.macros,
-            vec![HelpMacro::Allowed(SafeHelpMacro::OpenUrl {
-                url: "http://www.helpscribble.com/".to_owned(),
-            })]
-        );
-
-        let https = HelpMacroProgram::parse(r#"ExecFile("https://example.com/path")"#)
-            .expect("HTTPS ExecFile parses");
-        assert!(matches!(
-            &https.macros[0],
-            HelpMacro::Allowed(SafeHelpMacro::OpenUrl { url }) if url == "https://example.com/path"
-        ));
-    }
-
-    #[test]
-    fn execfile_browser_exception_does_not_enable_general_host_execution() {
-        for text in [
-            r#"EF("file:///C:/Windows/notepad.exe",`',1)"#,
-            r#"EF("calc.exe",`',1)"#,
-            r#"EF("https://example.com",`--argument',1)"#,
-        ] {
-            let program = HelpMacroProgram::parse(text).expect("ExecFile syntax parses");
-            assert!(matches!(
-                &program.macros[0],
-                HelpMacro::Blocked(BlockedHelpMacro {
-                    reason: MacroBlockReason::ExternalExecution,
-                    ..
-                })
-            ));
-        }
     }
 
     #[test]
